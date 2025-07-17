@@ -129,9 +129,6 @@ def copy_playlist_from_spotify_to_tidal(sp, sp_pl, ts):
     new_pl = create_playlist_in_tidal(ts, sp_pl['name'], sp_pl['description'])
 
     pl_tracks = get_all_tracks_from_playlist_from_spotify(sp, sp_pl)
-    print(
-        f"{len(pl_tracks)} tracks in Spotify playlist: {sp_pl['name']}")
-    # pbar
     for track in tqdm(pl_tracks, desc="migration tracks", unit="tracks"):
         try:
             if not new_pl.add_by_isrc(track['track']['external_ids']['isrc']):
@@ -162,6 +159,7 @@ def main():
         print(f"Tidal signed in as: {ts.user.username}")
     except Exception as e:
         print(f"Error: {e}")
+        return
 
     options = inquirer.checkbox(
         message="What would you like to migrate?",
