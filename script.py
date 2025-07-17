@@ -1,4 +1,5 @@
 from secrets import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, TIDAL_USERNAME, TIDAL_PASSWORD
+from InquirerPy import inquirer
 import requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -10,7 +11,7 @@ SCOPE = "user-library-read user-top-read playlist-read-private"
 def auth_spotify():
     """Spotify authentication"""
     try:
-        print(f"redirect URI {SPOTIFY_REDIRECT_URI}")
+        print(f"Spotify redirect URI {SPOTIFY_REDIRECT_URI}")
 
         sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
             client_id=SPOTIFY_CLIENT_ID,
@@ -36,22 +37,56 @@ def auth_tidal():
         return None
 
 
-def get_saved_tracks_from_spotify(sp, offset=0, limit=50):
-    """reading saved tracks"""
-    print(f"\n{'='*50}")
-    print("READING SAVED TRACKS (LIKED SONGS)")
-    print(f"{'='*50}")
+def get_all_user_playlists_from_spotify(sp):
+    """reading all Spotify playlists from user"""
+    print("Reading all Spotify playlists ...")
 
-    results = sp.current_user_saved_tracks(limit=limit, offset=offset)
+    playlists = []
+    limit = 50
+    offset = 0
 
-    for idx, item in enumerate(results['items'], 1):
-        track = item['track']
-        artists = ', '.join([artist['name'] for artist in track['artists']])
-        print(f"{idx:2d}. {track['name']} - {artists}")
-        print(f"    Album: {track['album']['name']}")
-        print(f"    Added: {item['added_at'][:10]}")
-        print(f"    Item-data: {item}")
-        print()
+    while True:
+        results = sp.current_user_playlists(limit=limit, offset=offset)
+        playlists.extend(results['items'])
+        if results['next']:
+            offset += limit
+        else:
+            return playlists
+
+
+def get_all_tracks_from_playlist_from_spotify(sp, pl):
+    """reading all Spotify tracks from playlist"""
+    print(f"Reading all Spotify tracks from playlist: {pl['name']}")
+
+    tracks = []
+    limit = 100
+    offset = 0
+
+    while True:
+        results = sp.playlist_tracks(
+            playlist_id=pl['id'], limit=limit, offset=offset)
+        tracks.extend(results['items'])
+        if results['next']:
+            offset += limit
+        else:
+            return tracks
+
+
+def get_all_liked_tracks_from_spotify(sp):
+    """reading all Spotify liked tracks"""
+    print("Reading all Spotify liked tracks ...")
+
+    tracks = []
+    limit = 50
+    offset = 0
+
+    while True:
+        results = sp.current_user_saved_tracks(limit=limit, offset=offset)
+        tracks.extend(results['items'])
+        if results['next']:
+            offset += limit
+        else:
+            return tracks
 
 
 def get_top_tracks_from_spotify(sp, time_range='medium_term', limit=20):
@@ -102,118 +137,102 @@ def get_top_artists_from_spotify(sp, time_range='medium_term', limit=10):
         print()
 
 
-def get_user_playlists_from_spotify(sp, limit=20):
-    """reading playlists"""
-    print(f"\n{'='*50}")
-    print("YOUR PLAYLISTS")
-    print(f"{'='*50}")
-
-    results = sp.current_user_playlists(limit=limit)
-
-    for idx, playlist in enumerate(results['items'], 1):
-        print(f"{idx:2d}. {playlist['name']}")
-        print(f"    Tracks: {playlist['tracks']['total']}")
-        print(f"    Öffentlich: {'Ja' if playlist['public'] else 'Nein'}")
-        if playlist['description']:
-            print(f"    Beschreibung: {playlist['description'][:100]}...")
-        print(f"    Playlist-data: {playlist}")
-        print()
-
-
 def create_playlist_in_tidal(ts, name, description=""):
-    print(f"\n{'='*50}")
     print(f"CREATING PLAYLIST: {name}")
-    print(f"{'='*50}")
     playlist = ts.user.create_playlist(name, description)
     return playlist
 
 
-def add_track_to_playlist_in_tidal(playlist, track_isrc):
-    playlist.add_by_isrc(track_isrc)
-
-
-def search_track_on_tidal(ts, query_str, type_name='tracks'):
-    try:
-        print(query_str)
-        search = ts.search(query_str, '.Track')
-        return search['tracks']
-    except Exception as e:
-        print(f"Execption accurred: {type(e).__name__} - {e}")
-        return None
-
-
-def copy_playlist_from_spotify_to_tidal(sp, sp_pl_data, ts):
+def copy_playlist_from_spotify_to_tidal(sp, sp_pl, ts):
     """copy playlist from spotify to tidal"""
-    print(f"\n{'='*50}")
     print("COPY PLAYLIST")
-    print(f"{'='*50}")
 
-    pl_name = sp_pl_data['name']
-    pl_description = sp_pl_data['description']
+    new_pl = create_playlist_in_tidal(ts, sp_pl['name'], sp_pl['description'])
 
-    # comment back in, if i want to create the playlist
-    # new_pl = create_playlist_in_tidal(ts, pl_name, pl_description)
+    pl_tracks = get_all_tracks_from_playlist_from_spotify(sp, sp_pl)
+    print(
+        f"{len(pl_tracks)} tracks in Spotify playlist: {sp_pl['name']}")
+    for track in pl_tracks:
+        if not new_pl.add_by_isrc(track['track']['external_ids']['isrc']):
+            print(
+                f"Couldn't find '{track['track']['name']}' from {track['track']['artists'][0]['name']}")
 
-    tracks = sp.playlist_tracks(sp_pl_data['id'])
 
-    for track in tracks['items']:
-        track_name = track['track']['name']
-        track_first_artist = track['track']['artists'][0]['name']
-        search = search_track_on_tidal(
-            ts, track_name)  # f"{track_name} {track_first_artist}")
+def like_track_by_isrc_in_tidal(ts, isrc):
+    if not ts.user.favorites.add_track_by_isrc(isrc):
+        print(f"Couldn't find '{isrc}'")
 
 
 def main():
     """Start"""
+    print("Welcome to the Spotify ➜ Tidal Migration Tool!")
+
     try:
         sp = auth_spotify()
         ts = auth_tidal()
         if sp is None or ts is None:
+            print("Authentication Failed - Exiting")
             return
 
         sp_user = sp.current_user()
         print(f"Spotify signed in as: {sp_user['display_name']}")
         print(f"Tidal signed in as: {ts.user.username}")
-
-        while True:
-            print(f"\n{'='*50}")
-            print("WHAT DO YOU WANT TO DISPLAY?")
-            print("1. Saved tracks (liked songs)")
-            print("2. Top tracks (last 6 months)")
-            print("3. Top Artists (last 6 months)")
-            print("4. Your playlists")
-            print("5. All favorits")
-            print("6. copy")
-            print("0. Quit")
-            print("="*50)
-
-            choice = input("Choose your option (0-6): ")
-
-            if choice == '1':
-                get_saved_tracks_from_spotify(sp)
-            elif choice == '2':
-                get_top_tracks_from_spotify(sp)
-            elif choice == '3':
-                get_top_artists_from_spotify(sp)
-            elif choice == '4':
-                get_user_playlists_from_spotify(sp)
-            elif choice == '5':
-                get_saved_tracks_from_spotify(sp, limit=20)
-                get_top_tracks_from_spotify(sp)
-                get_top_artists_from_spotify(sp)
-                get_user_playlists_from_spotify(sp)
-            elif choice == '6':
-                playlists = sp.current_user_playlists(limit=5)
-                copy_playlist_from_spotify_to_tidal(
-                    sp, playlists['items'][2], ts)
-            elif choice == '0':
-                print("Bye!")
-                break
-            else:
-                print("Invalid selection. Please try again.")
-
     except Exception as e:
         print(f"Error: {e}")
+
+    options = inquirer.checkbox(
+        message="What would you like to migrate?",
+        choices=[
+            {"name": "Playlists", "value": "playlists"},
+            {"name": "Liked Tracks", "value": "liked"},
+            # {"name": "Albums", "value": "albums"},
+            # {"name": "Followed Artists", "value": "artists"},
+        ],
+        instruction="(Use space to select, enter to confirm)",
+    ).execute()
+
+    if not options:
+        print("Nothing selected - Exiting")
+        return
+
+    migrations = {
+        'playlists': [],
+        'liked': [],
+    }
+
+    # more selections
+    if "playlists" in options:
+        playlists = get_all_user_playlists_from_spotify(sp)
+
+        choices = [
+            {"name": f"{pl['name']} ({pl['tracks']['total']} Tracks)",
+             "value": pl}
+            for pl in playlists
+        ]
+
+        selected_playlists = inquirer.checkbox(
+            message="Which playlists do you want to migrate?",
+            choices=choices,
+            instruction="(Use space to select, enter to confirm)",
+        ).execute()
+        migrations['playlists'] = selected_playlists
+
+    if "liked" in options:
+        migrations['liked'] = get_all_liked_tracks_from_spotify(sp)
+
+    print("\nStarting migration ...\n")
+
+    # migrating
+    for pl in migrations['playlists']:
+        print("Migrating playlists ...")
+        copy_playlist_from_spotify_to_tidal(sp, pl, ts)
+
+    for like in migrations['liked']:
+        print("Migrating liked tracks ...")
+        like_track_by_isrc_in_tidal(ts, like['track']['external_ids']['isrc'])
+        return
+
+    print("migration done")
 
 
 if __name__ == "__main__":
