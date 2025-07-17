@@ -4,6 +4,7 @@ import requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import tidalapi
+from tqdm import tqdm
 
 SCOPE = "user-library-read user-top-read playlist-read-private"
 
@@ -39,102 +40,82 @@ def auth_tidal():
 
 def get_all_user_playlists_from_spotify(sp):
     """reading all Spotify playlists from user"""
-    print("Reading all Spotify playlists ...")
-
     playlists = []
     limit = 50
     offset = 0
 
-    while True:
-        results = sp.current_user_playlists(limit=limit, offset=offset)
-        playlists.extend(results['items'])
-        if results['next']:
-            offset += limit
-        else:
-            return playlists
+    first_results = sp.current_user_playlists(limit=limit, offset=offset)
+    total_playlists = first_results['total']
+    playlists.extend(first_results['items'])
+
+    with tqdm(total=total_playlists, desc="Spotify playlists", unit="playlists") as pbar:
+        pbar.update(len(first_results['items']))
+        offset += limit
+
+        while True:
+            results = sp.current_user_playlists(limit=limit, offset=offset)
+            playlists.extend(results['items'])
+            if results['next']:
+                offset += limit
+            else:
+                break
+
+    return playlists
 
 
 def get_all_tracks_from_playlist_from_spotify(sp, pl):
     """reading all Spotify tracks from playlist"""
-    print(f"Reading all Spotify tracks from playlist: {pl['name']}")
-
-    tracks = []
-    limit = 100
-    offset = 0
-
-    while True:
-        results = sp.playlist_tracks(
-            playlist_id=pl['id'], limit=limit, offset=offset)
-        tracks.extend(results['items'])
-        if results['next']:
-            offset += limit
-        else:
-            return tracks
-
-
-def get_all_liked_tracks_from_spotify(sp):
-    """reading all Spotify liked tracks"""
-    print("Reading all Spotify liked tracks ...")
-
     tracks = []
     limit = 50
     offset = 0
 
-    while True:
-        results = sp.current_user_saved_tracks(limit=limit, offset=offset)
-        tracks.extend(results['items'])
-        if results['next']:
-            offset += limit
-        else:
-            return tracks
+    first_results = sp.playlist_tracks(
+        playlist_id=pl['id'], limit=limit, offset=offset)
+    total_tracks = first_results['total']
+    tracks.extend(first_results['items'])
+
+    with tqdm(total=total_tracks, desc=f"{pl['name']} tracks", unit="tracks") as pbar:
+        pbar.update(len(first_results['items']))
+        offset += limit
+
+        while True:
+            results = sp.playlist_tracks(
+                playlist_id=pl['id'], limit=limit, offset=offset)
+            tracks.extend(results['items'])
+            if results['next']:
+                offset += limit
+            else:
+                break
+
+    return tracks
 
 
-def get_top_tracks_from_spotify(sp, time_range='medium_term', limit=20):
-    """reading top tracks"""
-    time_ranges = {
-        'short_term': 'LAST 4 WEEKS',
-        'medium_term': 'LAST 6 MONTHS',
-        'long_term': 'ALL TIME'
-    }
+def get_all_liked_tracks_from_spotify(sp):
+    """reading all Spotify liked tracks"""
+    tracks = []
+    limit = 50
+    offset = 0
 
-    print(f"\n{'='*50}")
-    print(f"TOP TRACKS ({time_ranges[time_range]})")
-    print(f"{'='*50}")
+    first_results = sp.current_user_saved_tracks(limit=limit, offset=offset)
+    total_tracks = first_results['total']
+    tracks.extend(first_results['items'])
 
-    results = sp.current_user_top_tracks(time_range=time_range, limit=limit)
+    with tqdm(total=total_tracks, desc="Loading Spotify liked tracks", unit="tracks") as pbar:
+        pbar.update(len(first_results['items']))
+        offset += limit
 
-    for idx, track in enumerate(results['items'], 1):
-        artists = ', '.join([artist['name'] for artist in track['artists']])
-        print(f"{idx:2d}. {track['name']} - {artists}")
-        print(f"    Album: {track['album']['name']}")
-        print(f"    Popularität: {track['popularity']}/100")
-        print(f"    Track-data: {track}")
-        print()
+        while first_results['next']:
+            results = sp.current_user_saved_tracks(limit=limit, offset=offset)
+            tracks.extend(results['items'])
+            pbar.update(len(results['items']))
 
+            if results['next']:
+                offset += limit
+            else:
+                break
 
-def get_top_artists_from_spotify(sp, time_range='medium_term', limit=10):
-    """reading top artists"""
-    time_ranges = {
-        'short_term': 'LAST 4 WEEKS',
-        'medium_term': 'LAST 6 MONTHS',
-        'long_term': 'ALL TIME'
-    }
-
-    print(f"\n{'='*50}")
-    print(f"TOP ARTISTS ({time_ranges[time_range]})")
-    print(f"{'='*50}")
-
-    results = sp.current_user_top_artists(time_range=time_range, limit=limit)
-
-    for idx, artist in enumerate(results['items'], 1):
-        genres = ', '.join(artist['genres'][:3]
-                           ) if artist['genres'] else 'Keine Genres'
-        print(f"{idx:2d}. {artist['name']}")
-        print(f"    Genres: {genres}")
-        print(f"    Popularität: {artist['popularity']}/100")
-        print(f"    Follower: {artist['followers']['total']:,}")
-        print(f"    Artist-data: {artist}")
-        print()
+    tracks.reverse()
+    return tracks
 
 
 def create_playlist_in_tidal(ts, name, description=""):
@@ -145,22 +126,24 @@ def create_playlist_in_tidal(ts, name, description=""):
 
 def copy_playlist_from_spotify_to_tidal(sp, sp_pl, ts):
     """copy playlist from spotify to tidal"""
-    print("COPY PLAYLIST")
-
     new_pl = create_playlist_in_tidal(ts, sp_pl['name'], sp_pl['description'])
 
     pl_tracks = get_all_tracks_from_playlist_from_spotify(sp, sp_pl)
     print(
         f"{len(pl_tracks)} tracks in Spotify playlist: {sp_pl['name']}")
-    for track in pl_tracks:
-        if not new_pl.add_by_isrc(track['track']['external_ids']['isrc']):
-            print(
-                f"Couldn't find '{track['track']['name']}' from {track['track']['artists'][0]['name']}")
+    # pbar
+    for track in tqdm(pl_tracks, desc="migration tracks", unit="tracks"):
+        try:
+            if not new_pl.add_by_isrc(track['track']['external_ids']['isrc']):
+                print(
+                    f"Couldn't find '{track['track']['name']}' from {track['track']['artists'][0]['name']}")
+        except Exception as e:
+            tqdm.write(f"Error at track {track['track']['name']}: {e}")
 
 
-def like_track_by_isrc_in_tidal(ts, isrc):
+def like_track_by_isrc_in_tidal(ts, isrc, name):
     if not ts.user.favorites.add_track_by_isrc(isrc):
-        print(f"Couldn't find '{isrc}'")
+        print(f"Couldn't find '{name}'")
 
 
 def main():
@@ -202,35 +185,52 @@ def main():
 
     # more selections
     if "playlists" in options:
-        playlists = get_all_user_playlists_from_spotify(sp)
+        try:
+            playlists = get_all_user_playlists_from_spotify(sp)
 
-        choices = [
-            {"name": f"{pl['name']} ({pl['tracks']['total']} Tracks)",
-             "value": pl}
-            for pl in playlists
-        ]
+            choices = [
+                {"name": f"{pl['name']} ({pl['tracks']['total']} Tracks)",
+                 "value": pl}
+                for pl in playlists
+            ]
 
-        selected_playlists = inquirer.checkbox(
-            message="Which playlists do you want to migrate?",
-            choices=choices,
-            instruction="(Use space to select, enter to confirm)",
-        ).execute()
-        migrations['playlists'] = selected_playlists
+            selected_playlists = inquirer.checkbox(
+                message="Which playlists do you want to migrate?",
+                choices=choices,
+                instruction="(Use space to select, enter to confirm)",
+            ).execute()
+
+            migrations['playlists'] = selected_playlists
+        except Exception as e:
+            print(f"Error at selecting playlists: {e}")
+            return
 
     if "liked" in options:
-        migrations['liked'] = get_all_liked_tracks_from_spotify(sp)
+        try:
+            migrations['liked'] = get_all_liked_tracks_from_spotify(sp)
+        except Exception as e:
+            print(f"Error at reading liked tracks: {e}")
+            return
 
     print("\nStarting migration ...\n")
 
     # migrating
-    for pl in migrations['playlists']:
+    if migrations['playlists']:
         print("Migrating playlists ...")
-        copy_playlist_from_spotify_to_tidal(sp, pl, ts)
+        for pl in tqdm(migrations['playlists'], desc="migrating playlists", unit="playlists"):
+            try:
+                copy_playlist_from_spotify_to_tidal(sp, pl, ts)
+            except Exception as e:
+                tqdm.write(f"Error at playlist {pl['name']}: {e}")
 
-    for like in migrations['liked']:
+    if migrations['liked']:
         print("Migrating liked tracks ...")
-        like_track_by_isrc_in_tidal(ts, like['track']['external_ids']['isrc'])
-        return
+        for like in tqdm(migrations['liked'], desc="migrating liked tracks", unit="tracks"):
+            try:
+                like_track_by_isrc_in_tidal(
+                    ts, like['track']['external_ids']['isrc'], like['track']['name'])
+            except Exception as e:
+                tqdm.write(f"Error at track {like['track']['name']}: {e}")
 
     print("migration done")
 

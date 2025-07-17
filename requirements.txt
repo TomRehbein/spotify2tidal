@@ -1,3 +1,5 @@
 tidalapi
 spotipy
 requests
+InquirerPy
+tqdm
