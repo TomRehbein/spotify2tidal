@@ -1,6 +1,5 @@
 from secrets import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, TIDAL_USERNAME, TIDAL_PASSWORD
 from InquirerPy import inquirer
-import requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import tidalapi
